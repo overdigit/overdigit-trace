@@ -1,18 +1,21 @@
 use std::error::Error;
-use std::io::Write;
 use std::fs::Permissions;
+use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixDatagram, UnixListener, UnixStream};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 mod util;
 
 struct Message {
     time: std::time::Duration,
-    content: String
+    content: String,
 }
 
 impl Message {
-    const EMPTY: Message = Message { time: std::time::Duration::ZERO, content: String::new() };
+    const END_OF_PAST: &[u8; 6] = &[0x30, 0x09, 0x45, 0x4f, 0x50, 0x0a];
+    const TERM: &[u8; 7] = &[0x30, 0x09, 0x54, 0x45, 0x52, 0x4d, 0x0a];
 }
 
 impl std::fmt::Display for Message {
@@ -77,7 +80,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     let dump_dir_env = std::env::var("OVERDIGIT_EXPORT_SOCK_DIR");
     let dump_dir = dump_dir_env.unwrap_or("/var/run/".to_string());
 
-
     let dump_dir_path = std::path::Path::new(&dump_dir);
     if !dump_dir_path.is_dir() {
         return Err(
@@ -107,36 +109,51 @@ fn main() -> Result<(), Box<dyn Error>> {
     listener.set_nonblocking(true);
     let mut readers = Vec::<std::os::unix::net::UnixStream>::new();
 
+    let running = Arc::new(AtomicBool::new(true));
+    let r = running.clone();
 
-    loop {
-        match log_sock.recv(&mut buf) {
+    ctrlc::set_handler(move || {
+        r.store(false, Ordering::SeqCst);
+    })
+    .expect("Error setting termination handler");
+
+    while running.load(Ordering::SeqCst) {
+        let bytes = match log_sock.recv(&mut buf) {
             Ok(bytes) => {
+                println!("Received");
                 buf[bytes] = 0; // Terminate the string
-                let msg =
-                    String::from_utf8((buf[..bytes]).to_vec()).unwrap_or("[ERR]\t\tInvalid string".to_string()).trim_end_matches('\n').to_string();
-                let item = Message {time: std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH).unwrap(), content: msg};
+                let msg = str::from_utf8(&buf[..bytes])
+                    .unwrap_or("[ERR]\t\tInvalid string")
+                    .trim_end_matches('\n')
+                    .to_string();
+                let item = Message {
+                    time: std::time::SystemTime::now()
+                        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                        .unwrap(),
+                    content: msg,
+                };
                 //println!("{item:?}");
-                readers.retain(|mut stream| {
-                    match stream.write_all(format!("{}", item).as_bytes()) {
-                        Ok(()) => {true}
-                        Err(e) => {
-                            match e.kind() {
-                                _ => {
-                                    eprintln!("{e:?}");
-                                    false
-                                }
+                readers.retain(
+                    |mut stream| match stream.write_all(format!("{}", item).as_bytes()) {
+                        Ok(()) => true,
+                        Err(e) => match e.kind() {
+                            _ => {
+                                eprintln!("{e:?}");
+                                false
                             }
-                        }
-                    }
-                });
+                        },
+                    },
+                );
                 log.push_back(item);
                 log.retain_back(10_000);
             }
-            Err(e) => match e.kind() {
-                std::io::ErrorKind::WouldBlock => {}
-                _ => eprintln!("{e:?}"),
-            },
-        }
+            Err(e) => {
+                match e.kind() {
+                    std::io::ErrorKind::WouldBlock => {}
+                    _ => eprintln!("{e:?}"),
+                };
+            }
+        };
         loop {
             match listener.accept() {
                 Ok((mut sock, _addr)) => {
@@ -149,17 +166,21 @@ fn main() -> Result<(), Box<dyn Error>> {
                             }
                         }
                     }
-                    sock.write_all(format!("{}", Message::EMPTY).as_bytes());
+                    sock.write_all(Message::END_OF_PAST);
                     readers.push(sock);
-                    // TODO: send all messages
-                    // TODO: then send empty message with timestamp zero (end of past marker)
                 }
                 Err(e) => match e.kind() {
                     std::io::ErrorKind::WouldBlock => break,
                     _ => eprintln!("{e:?}"),
-                }
+                },
             }
         }
     }
+    for mut stream in readers {
+        stream.shutdown(std::net::Shutdown::Both);
+    }
+    std::fs::remove_file(dump_sock_path);
+    log_sock.shutdown(std::net::Shutdown::Both);
+    std::fs::remove_file(sock_path);
     Ok(())
 }

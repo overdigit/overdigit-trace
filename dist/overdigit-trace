@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+
+socket="/var/run/overdigit-trace-socket.sock"
+
+usage() { echo "Usage: $0 [-s <socket path>] [<attach|dump>]" >&2; exit 1; }
+
+trap terminate EXIT
+terminate() {
+	kill $NC_PID 2>/dev/null
+}
+
+while getopts ":s:r" o; do
+	case "${o}" in
+	s)
+		socket="${OPTARG}"
+		;;
+	r)
+		raw="true"
+		;;
+	esac
+done
+shift $((OPTIND-1))
+mode="${1-attach}"
+
+case "$mode" in
+attach|dump)
+	;;
+*)
+	usage
+	;;
+esac
+
+if [[ ! -S "$socket" ]]
+then
+	echo "Please provide a valid socket path." >&2
+	usage
+fi
+
+exec {FD}<><(:)
+
+nc -U "${socket}" >&$FD &
+NC_PID=$!
+
+TAB="$(printf '\t')"
+
+while IFS="$TAB" read -u "$FD" timestamp component message
+do
+	if [[ "$timestamp" -eq 0 ]]
+	then
+		case "$component" in
+		EOP)
+			[[ "$mode" == "attach" ]] && continue || break
+			;;
+		TERM)
+			terminate
+			;;
+		esac
+	fi
+	printf "%(%Y-%m-%d %H:%M:%S)T.%06d\t%s\t%s\n" "$((timestamp / 1000000000))" "$((timestamp % 1000000000 / 1000))" "$component" "$message"
+done &
+
+wait $NC_PID
+
+echo "Log server or socket connection terminated."
