@@ -9,3 +9,18 @@ inotify = "0.11.5"
 
 [features]
 placeholders = []
+
+[package.metadata.deb]
+name = "overdigit-trace"
+revision = "1"
+maintainer-scripts = "debian/"
+section = "misc"
+systemd-units = { }
+extended-description = """\
+A daemon to collect traced data from CODESYS applications, or anywhere or anything else.\
+Meant for use on OVERDIGIT WP360 PLC devices via the OVERDIGIT TraceSOCK CODESYS library."""
+assets = [
+    ["target/release/overdigit-trace-rs", "usr/libexec/overdigit-trace/overdigit-trace", "755"],
+    ["dist/overdigit-trace", "usr/bin/", "755"],
+]
+

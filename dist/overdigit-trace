@@ -9,13 +9,13 @@ terminate() {
 	kill $NC_PID 2>/dev/null
 }
 
-while getopts ":s:r" o; do
+while getopts ":s:f:" o; do
 	case "${o}" in
 	s)
 		socket="${OPTARG}"
 		;;
-	r)
-		raw="true"
+	f)
+		filter+=("${OPTARG}")
 		;;
 	esac
 done
@@ -45,6 +45,13 @@ TAB="$(printf '\t')"
 
 while IFS="$TAB" read -u "$FD" timestamp component message
 do
+	if [[ ! "$timestamp" =~ ^[0-9]+$ ]]
+	then
+		message="$component"
+		component="$timestamp"
+		timestamp="$old_time"
+
+	fi
 	if [[ "$timestamp" -eq 0 ]]
 	then
 		case "$component" in
@@ -56,9 +63,30 @@ do
 			;;
 		esac
 	fi
-	printf "%(%Y-%m-%d %H:%M:%S)T.%06d\t%s\t%s\n" "$((timestamp / 1000000000))" "$((timestamp % 1000000000 / 1000))" "$component" "$message"
+	old_time="$timestamp"
+	if [[ -n "$filter" ]]
+	then
+		for regex in "${filter[@]}"
+		do
+			if [[ "$component" =~ $regex ]]
+			then
+				printf "%(%Y-%m-%d %H:%M:%S)T.%06d\t%s\t%s\n" "$((timestamp / 1000000000))" "$((timestamp % 1000000000 / 1000))" "$component" "$message"
+				break
+			fi
+		done
+	else
+		printf "%(%Y-%m-%d %H:%M:%S)T.%06d\t%s\t%s\n" "$((timestamp / 1000000000))" "$((timestamp % 1000000000 / 1000))" "$component" "$message"
+	fi
 done &
+WHILE_PID=$!
 
-wait $NC_PID
+wait -p JOB_PID -n
 
-echo "Log server or socket connection terminated."
+case "$JOB_PID" in
+"$NC_PID")
+        echo "Log server or socket connection terminated." >&2
+        ;;
+*)
+        terminate
+        ;;
+esac

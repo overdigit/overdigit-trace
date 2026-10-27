@@ -1,0 +1,11 @@
+[Unit]
+Description=Daemon for data logging
+After=multi-user.target
+Requires=codesyscontrol.service
+After=codesyscontrol.service
+
+[Service]
+ExecStart=/usr/libexec/overdigit-trace/overdigit-trace
+
+[Install]
+WantedBy=codesyscontrol.service

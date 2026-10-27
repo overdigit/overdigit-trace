@@ -29,7 +29,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let env_set = dir_env.is_ok();
     let dir = dir_env.unwrap_or("/var/opt/codesyscontrolapi/extfuncs/".to_string());
 
-    let mut buf = vec![0; 1024];
+    let mut buf = vec![0; 4096];
     let mut log = std::collections::VecDeque::<Message>::new();
 
     let dir_path = std::path::Path::new(&dir);
@@ -120,8 +120,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     while running.load(Ordering::SeqCst) {
         let bytes = match log_sock.recv(&mut buf) {
             Ok(bytes) => {
-                println!("Received");
-                buf[bytes] = 0; // Terminate the string
+                if bytes < 4096 {
+                    buf[bytes] = 0; // Terminate the string
+                }
                 let msg = str::from_utf8(&buf[..bytes])
                     .unwrap_or("[ERR]\t\tInvalid string")
                     .trim_end_matches('\n')
