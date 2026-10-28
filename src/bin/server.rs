@@ -6,7 +6,7 @@ use std::os::unix::net::{UnixDatagram, UnixListener, UnixStream};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-mod util;
+use overdigit_trace_rs::util;
 
 struct Message {
     time: std::time::Duration,
@@ -134,8 +134,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                     content: msg,
                 };
                 //println!("{item:?}");
-                readers.retain(
-                    |mut stream| match stream.write_all(format!("{}", item).as_bytes()) {
+                readers.retain(|mut stream| {
+                    match stream.write_all(format!("{}", item).as_bytes()) {
                         Ok(()) => true,
                         Err(e) => match e.kind() {
                             _ => {
@@ -143,8 +143,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 false
                             }
                         },
-                    },
-                );
+                    }
+                });
                 log.push_back(item);
                 log.retain_back(10_000);
             }

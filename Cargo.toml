@@ -4,8 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+clap = { version = "4.6.7", features = ["derive"] }
 ctrlc = "3.5.2"
 inotify = "0.11.5"
+time = { version = "0.3.55", features = ["formatting", "macros"] }
 
 [features]
 placeholders = []
@@ -20,7 +22,8 @@ extended-description = """\
 A daemon to collect traced data from CODESYS applications, or anywhere or anything else.\
 Meant for use on OVERDIGIT WP360 PLC devices via the OVERDIGIT TraceSOCK CODESYS library."""
 assets = [
-    ["target/release/overdigit-trace-rs", "usr/libexec/overdigit-trace/overdigit-trace", "755"],
-    ["dist/overdigit-trace", "usr/bin/", "755"],
+    ["target/release/server", "usr/libexec/overdigit-trace/overdigit-trace", "755"],
+    ["target/release/client", "usr/bin/overdigit-trace", "755"],
+    ["dist/overdigit-trace", "usr/libexec/overdigit-trace/overdigit-trace-script", "755"],
 ]
 
