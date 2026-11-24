@@ -2,7 +2,7 @@
 name = "overdigit-trace-rs"
 authors = ["OVERDIGIT <info@overdigit.com>"]
 description = "daemon for the CODESYS library TraceSOCK from OVERDIGIT"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 
 [dependencies]

@@ -26,8 +26,11 @@ struct Args {
 enum Mode {
     /// Print the last traced values and continue printing in real time.
     Attach,
-    /// Print the last traced values, then quit.
-    Dump,
+    /// Print the last traced values to either standard output or a file, then quit.
+    Dump { 
+        /// Path of the file to write the trace output to. Defaults to standard output. 
+        path: Option<String>
+    },
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -58,6 +61,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut buf = [0u8; 4096]; //vec![0; 4096];
     let mut buf2 = Vec::<u8>::new();
     let mut component_cached = "".to_string();
+
+    let mut output: std::io::BufWriter<Box<dyn std::io::Write>> = match args.mode {
+        Mode::Dump { path: Some(ref path) } => {
+            let f = std::fs::File::create(path)?;
+            std::io::BufWriter::new(Box::new(f))
+        }
+        _ => std::io::BufWriter::new(Box::new(std::io::stdout())),
+
+    };
 
     while running.load(Ordering::SeqCst) {
         buf.fill(0);
@@ -104,7 +116,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                                         Mode::Attach => {
                                             None
                                         }
-                                        Mode::Dump => {
+                                        Mode::Dump {path: _} => {
                                             running.store(false, Ordering::SeqCst);
                                             None
                                         }
@@ -137,7 +149,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                                             component
                                         }.matches(p).next().is_some())
                                 ) {
-                                    println!("{time}\t{component}\t{message}");
+                                    writeln!(&mut output, "{time}\t{component}\t{message}");
+                                    //println!("{time}\t{component}\t{message}");
                             }
                         } else {
                             eprintln!("Malformed UTF-8");
@@ -155,6 +168,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     let slice = &buf[last_index..last_index + last_length];
                     buf2.extend(slice);
                 }
+                output.flush();
             }
             Err(e) => {
                 match e.kind() {
@@ -165,7 +179,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         };
     }
-    std::io::stdout().flush();
+    //std::io::stdout().flush();
     sock.shutdown(std::net::Shutdown::Both);
     Ok(())
 }
