@@ -1,8 +1,6 @@
 use std::error::Error;
-use std::fs::Permissions;
 use std::io::{Read, Write};
-use std::os::unix::fs::PermissionsExt;
-use std::os::unix::net::{UnixDatagram, UnixListener, UnixStream};
+use std::os::unix::net::UnixStream;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -45,9 +43,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         Err(e) => return Err(Box::new(e)),
     }
 
-    let mut sock = UnixStream::connect(&sock_path)?;
+    let mut sock = UnixStream::connect(sock_path)?;
     sock.set_read_timeout(Some(std::time::Duration::from_millis(200)));
-    //listener.set_nonblocking(true);
+    sock.set_nonblocking(false);
 
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
@@ -57,60 +55,105 @@ fn main() -> Result<(), Box<dyn Error>> {
     })
     .expect("Error setting termination handler");
 
-    let mut buf = vec![0; 4096];
+    let mut buf = [0u8; 4096]; //vec![0; 4096];
+    let mut buf2 = Vec::<u8>::new();
+    let mut component_cached = "".to_string();
 
     while running.load(Ordering::SeqCst) {
+        buf.fill(0);
         match sock.read(&mut buf) {
             Ok(bytes) => {
-                println!("Packet!");
-                if bytes < 4096 {
-                    buf[bytes] = 0; // Terminate the string
+                if bytes == 0 {
+                    eprintln!("Connection interrupted.");
+                    break;
                 }
-                let msg = str::from_utf8(&buf[..bytes])
-                    .unwrap_or("\t[Error]\tInvalid string")
-                    .trim_end_matches('\n');
-                //.to_string();
-                for line in msg.split("\n") { // TODO: split_inclusive, if last isn't newline
-                                              // terminated put in temp buffer and append the next
-                                              // read to it 
-                    println!("Line!");
-                    let parts: Vec<_> = line.splitn(3, "\t").collect();
-                    let (time, component, message) = match parts.len() {
-                        1 => ("", "", parts[0]),
-                        2 => (parts[0], "", parts[1]),
-                        3 => (parts[0], parts[1], parts[2]),
-                        _ => unreachable!(),
-                    };
-                    let time = match i128::from_str(time) {
-                        Ok(0) => match message {
-                            "EOP" => match args.mode {
-                                Mode::Attach => continue,
-                                Mode::Dump => {
-                                    running.store(false, Ordering::SeqCst);
-                                    continue;
+                // split incoming buf into messages by '\n'
+                // append current portion to buf2
+                // if portion has no terminating '\n', break
+                // make a str out of buf2 and parse that
+                //
+                // Fold into a vec of vecs? a vec of slices?
+                // Can probably use the accumulator as an index of sorts
+                // like, fold( (0, 0), |(index, length), x| {
+                // length+=1
+                // if x is '\n', push &buf[index..index+length] somewhere
+                // and also (index, length) = (index += length, 0)
+                // })
+                // after fold, if bytes is max, manually add the last slice to the slice list
+                // then do the above
+                let (last_index, last_length) = buf.iter().fold( (0, 0), |(index, length), c| {
+                    if *c == 10 { // newline
+                        buf2.extend(&buf[index..(index+length+1)]);
+                        let msg = str::from_utf8(&buf2);
+                        if let Ok(line) = msg {
+                            //eprint!("Line! §{line}§");
+                            let parts: Vec<_> = line.splitn(3, "\t").collect();
+                            let (time, component, message) = match parts.len() {
+                                1 => ("", "", parts[0]),
+                                2 => (parts[0], "", parts[1]),
+                                3 => {
+                                    component_cached = parts[1].to_string();
+                                    (parts[0], parts[1], parts[2])
                                 }
-                            },
-                            "TERM" => {
-                                running.store(false, Ordering::SeqCst);
-                                continue;
+                                _ => unreachable!(),
+                            };
+                            let message = message.trim();
+                            let time: Option<String> = match i128::from_str(time) {
+                                Ok(0) => match message {
+                                    "EOP" => match args.mode {
+                                        Mode::Attach => {
+                                            None
+                                        }
+                                        Mode::Dump => {
+                                            running.store(false, Ordering::SeqCst);
+                                            None
+                                        }
+                                    },
+                                    "TERM" => {
+                                        running.store(false, Ordering::SeqCst);
+                                        None
+                                    }
+                                    _ => {
+                                        None
+                                    }
+                                },
+                                Ok(n) => match time::Timestamp::from_nanoseconds(n) {
+                                    Ok(t) => match t.format(time::macros::format_description!(
+                                        "[year]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:6]"
+                                    )) {
+                                        Ok(s) => Some(s),
+                                        Err(_) => Some("".to_string()),
+                                    },
+                                    Err(_) => Some("".to_string()),
+                                },
+                                Err(_) => Some("".to_string()),
+                            };
+                            if let Some(time) = time
+                                && (args.filter.is_empty() ||
+                                    args.filter.iter().any(|p|
+                                        if component.is_empty() {
+                                            component_cached.as_str()
+                                        } else {
+                                            component
+                                        }.matches(p).next().is_some())
+                                ) {
+                                    println!("{time}\t{component}\t{message}");
                             }
-                            _ => continue,
-                        },
-                        Ok(n) => match time::Timestamp::from_nanoseconds(n) {
-                            Ok(t) => match t.format(time::macros::format_description!(
-                                "[year]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:6]"
-                            )) {
-                                Ok(s) => s,
-                                Err(_) => "".to_string(),
-                            },
-                            Err(_) => "".to_string(),
-                        },
-                        Err(_) => "".to_string(),
-                    };
-                    if args.filter.len() > 0 && !args.filter.iter().any(|p| component.matches(p).next().is_some()) {
-                        continue;
+                        } else {
+                            eprintln!("Malformed UTF-8");
+                            // TODO: print better error
+                        }
+                        buf2.clear();
+                        (index + length + 1, 0)
+                    } else if *c == 0 {
+                        (index + length + 1, 0)
+                    } else {
+                        (index, length + 1)
                     }
-                    println!("!{time}!\t\"{component}\"\t${message}$");
+                });
+                if last_length > 0 {
+                    let slice = &buf[last_index..last_index + last_length];
+                    buf2.extend(slice);
                 }
             }
             Err(e) => {

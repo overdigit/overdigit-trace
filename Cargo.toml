@@ -1,6 +1,8 @@
 [package]
 name = "overdigit-trace-rs"
-version = "0.1.0"
+authors = ["OVERDIGIT <info@overdigit.com>"]
+description = "daemon for the CODESYS library TraceSOCK from OVERDIGIT"
+version = "0.1.2"
 edition = "2024"
 
 [dependencies]
@@ -26,4 +28,3 @@ assets = [
     ["target/release/client", "usr/bin/overdigit-trace", "755"],
     ["dist/overdigit-trace", "usr/libexec/overdigit-trace/overdigit-trace-script", "755"],
 ]
-
